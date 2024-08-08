@@ -7,4 +7,4 @@ Collaboration elements include:
 * adding structural and parametricy uncertainty to simulations, and
 * output probability estimates.
 
-This ReadMe will be futher updated as the colloboration comes together.
+This ReadMe will be futher updated as the collaboration comes together.
