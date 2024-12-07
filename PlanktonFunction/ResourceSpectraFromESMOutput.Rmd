@@ -7,20 +7,22 @@ date: "2024-10-11"
 
 ## How to use this script
 This script includes a function to create mizer resource spectra from earth 
-system model (ESM) output: `ESMspectrum`.  It also has some additional code and 
-loads some data to walk you through an example.  
+system model (ESM) output: `ESMspectrum`.  It also includes a function, 
+`plankton_forcing`, for forcing your mizer model with the ESM-derrived resource
+spectra.  And, it has some additional code and loads some data to walk you 
+through an example.  
 
 If you want to fully replicate the work here, all the necessary data are provided
 in this folder.  If you have your own data ready to go, you can skim the script
-and jump to the `ESMspectrum` function.  And, if you have questions or need a hand, please
-[open an issue](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/issues). 
+and jump to the `ESMspectrum` and `plankton_forcing` functions.  And, if you have 
+questions or need a hand, please [open an issue](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/issues). 
 Someone else probably has the same questions you do, so you'll be helping people 
 out by doing this.
 
 We'll get the `ESMspectrum` function linked to the [mizer](https://github.com/sizespectrum/mizer)
-or [therMizer](https://github.com/sizespectrum/therMizer) packages soon!  
+or [therMizer](https://github.com/sizespectrum/therMizer) packages soon! 
 Once they're there, you can use them without this guide.  In the meantime, you 
-could copy and paste just the function for use in your own modeling.  
+could copy and paste just the functions for use in your own modeling.  
 
 ### An example for the Hawaiʻi-based deep-set longline fishery
 This example uses a model configured for the Hawaiʻi-based deep-set longline 
@@ -32,11 +34,12 @@ piece, you can [open an issue](https://github.com/pwoodworth-jefcoats/therMizer-
 
 #### Data provided
 The following data are included in this folder and used to run this script:  
-* HIregion_species_params.csv: species parameters for this model  
-* HIregion_inter.csv: species interaction matrix for this model  
-* GFDLplankton.csv: matrix with ESM-output plankton carbon densities (more on
+
+* `HIregion_species_params.csv`: species parameters for this model  
+* `HIregion_inter.csv`: species interaction matrix for this model  
+* `GFDLplankton.csv`: matrix with ESM-output plankton carbon densities (more on
 this below)  
-* GFDLsizes.csv: size class midpoints for ESM plankton groups (more on this below)
+* `GFDLsizes.csv`: size class midpoints for ESM plankton groups (more on this below)
 
 #### Set up your mizer model
 Here, we'll set up the multi-species mizer model that we want to force with the 
@@ -67,6 +70,7 @@ Now, we're ready to use the ESM output to create resource spectra.  Exciting!
 This example uses output from the GFDL-MOM6-COBALT2 model that was used in 
 FishMIP's 2022 ISIMIP 3a protocol.  You can use whatever ESM you want.  You just
 need:  
+
 * Total plankton carbon (in grams) for each size class for each time step of your
 simulation.  This is what's provided in `GFDLplankton.csv`.   
 * Values for the mid-point of each size class (in grams wet weight).  This is what's 
@@ -78,7 +82,7 @@ the simulation focuses on top predators, but you might want a smaller size range
 If you need to convert plankton size classes from Equivalent Spherical Diameter (ESD)
 in $\mu$m to grams wet weight, you can use this equation:  
 $\frac{4}{3}\pi(0.5\times0.0001\times size)^3$
-**NOTE TO SELF: add citation for this**
+from Boudreau and Dickie (1992).
 If you'd like this functionality added to the `ESMspectrum` function, simply
 [open an issue](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/issues) to
 request it. 
@@ -106,6 +110,7 @@ The column headers match in name and order `GFDLplankton`.
 
 This is all you need, along with `w_full`, to use the function below to convert 
 the ESM output into resource spectra.  Here's what the function does:  
+
 * Converts plankton biomass densities from grams carbon to grams wet weight by 
 multiplying by 10,  
 * Converts plankton biomass densities to numerical abundance by dividing each 
@@ -121,21 +126,30 @@ can specify something different.
 * Includes the options to set values by which to scale the linear model's slope
 and intercept.  This is often needed in order to generate resource spectra that
 allow your model to stabilize.  ESMs aren't designed to fully replicate real plankton
-communities, which is why this scaling is often necessary.
-* Returns 3 things:  
+communities, which is why this scaling is often necessary.  
+* Includes the option to specify time steps if you want to use something specific
+in your mizer model.  The default is time steps numbered 0 through the maximum number
+of time steps in your plankton data.
+* Returns 4 things:  
   + Background resource array with the dimensions of time $\times$ size  
+  + Background resource array ready as `n_pp_array` for attaching to your model  
   + The slope from the linear model at each time step, for diagnostic purposes
   + The intercept from the linear model at each time step, for diagnostic purposes
-  
-Here's the function:
+
+Here's the `ESMspectrum` function:
 ```{r}
 ESMspectrum <- function(plankton_array, 
                         plankton_sizes, 
                         resource_sizes = params@w_full, 
                         slope_scale = 1, 
-                        intercept_scale = 1){
+                        intercept_scale = 1,
+                        time_steps = seq(0, dim(plankton_array)[1], 1)){
+  # First, convert data frames to matrices
+  plankton_array <- as.matrix(plankton_array)
+  plankton_sizes <- as.matrix(plankton_sizes)
+  
   # Numerical abundance from biomass densities converted to gww
-  plankton_abundance <- plankton_array*10/as.vector(plankton_sizes)
+  plankton_abundance <- sweep((plankton_array * 10), 2, plankton_sizes, '/')
   
   # Size classes for linear model (in log space)
   plankton_x <- as.numeric(log10(plankton_sizes))
@@ -146,17 +160,17 @@ ESMspectrum <- function(plankton_array,
   # Use linear model to generate resource spectra at each time step
   # Identify number of time steps
   t_max <- dim(plankton_array)[1]
-    # Identify number of size classes
-  sizes <- length(resource_x)
+  # Identify number of size classes
+  n_sizes <- length(resource_x)
   
   # Create array and fill it
-  resource_spectra <- array(numeric(), c(t_max,sizes)) # time by size
+  resource_spectra <- array(numeric(), c(t_max,n_sizes)) # time by size
   resource_slope <- array(numeric(), c(t_max,1)) 
   resource_intercept <- array(numeric(), c(t_max,1)) 
   
   # y values
   for (t in seq(1,t_max,1)) {
-    resource_plankton <- as.numeric(log10(plankton_array[t,]))
+    resource_plankton <- as.numeric(log10(plankton_abundance[t,]))
     
     # Calculate slope and intercept, expand spectra for full size range
     # Linear fits
@@ -170,20 +184,116 @@ ESMspectrum <- function(plankton_array,
     resource_slope[t,1] <- resource_lm$coefficients[2]
   }
   
+  # Create n_pp_array
+  sizes <- names(params@initial_n_pp)
+  n_pp_array <- array(NA, dim = c(length(time_steps), length(sizes)), dimnames = list(time = time_steps, w = sizes))
+  
+  # Fill n_pp_array
+  n_pp_array[1,] <- resource_spectra[1,]
+  for (t in seq(1,length(time_steps) - 1,1)) {
+    n_pp_array[t + 1,] <- resource_spectra[t,]
+  }
+  
   return(list("resource_spectra" = resource_spectra, 
+              "n_pp_array" = n_pp_array,
               "resource_slope" = resource_slope, 
               "resource_intercept" = resource_intercept))
 }
 ```
 
-And here are some examples of how to use it:
+And here's how to use it in its simplest implementation:
 ```{r}
 Resource <- ESMspectrum(GFDLplankton, GFDLsizes)
 ```
 
-Yet to add:  
-* Attaching the resource to the parameters  
-* Examples with scaling, including why you'd scale the resource  
-* Running mizer with the ESM resource  
-* Additional explanatory text as helpful  
+#### Use the ESM-informed resource spectra
+But we want to do more than generate the resource spectra.  We want to use them 
+to force a mizer model.  To do that, we need to attach the spectra to the model
+parameters and tell mizer to use it.  This is where the `plankton_forcing`
+function comes in:
+```{r}
+# From therMizer, create a plankton_forcing function
+plankton_forcing <- function(params, t, ...) {
+  w_cut_off <- params@resource_params$w_pp_cutoff
+  # index selects the right resource for any t
+  index_vec <- as.numeric(dimnames(other_params(params)$n_pp_array)[[1]]) - t
+  index <- which(index_vec == max(index_vec[index_vec<=0]))
+  # Convert to density
+  pkt <- 10^(other_params(params)$n_pp_array[index,])/params@dw_full 
+  # Set sizes above plankton resource max to zero
+  pkt[which(as.numeric(names(pkt)) >= w_cut_off)] <- 0
+  return(pkt)
+}
+```
 
+Then, we need to tell mizer to use it and the new resource spectra (`n_pp_array`):
+```{r}
+# Also from therMizer, attach the n_pp_array using this function
+params <- setResource(params, resource_dynamics = "plankton_forcing")
+
+# Attach n_pp_array to params
+other_params(params)$n_pp_array <- Resource$n_pp_array
+```
+
+And, finally, use it in a very simple case without fishing:
+```{r}
+InitialSim <- project(params, dt = 1/12, t_max = 600, t_save = 10, effort = 0)
+plot(InitialSim)
+```
+
+#### Scaling the background resource
+The initial test we did above demonstrates why you'd want to scale the background 
+resource.  Earth system models aren't designed to model plankton communities, so
+their output a) doesn't always resemble real ecosystems, and b) isn't often 
+directly comparable across models.  Scaling the ESM-derived resource spectra
+can resolve both these issues.  An alternative would be to bias correct in the 
+way that's often done with temperature.  If you have observations you can use for
+this, go for it.  Most systems, including the one modeled here, lack those data.
+Hence, scaling.
+
+In order to have something to "ground truth" your scaling attempts to, you'll want
+to run mizer with your species and system parameters, and with mizer's built-in
+semi-chemostat resource.  Use the feeding levels and biomass densities that 
+result from that to guide your scaling efforts.  This is admittedly a bit tedious
+and requires iterative trial and error.  I'm open to alternatives.  Please 
+[open an issue](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/issues) to 
+suggest them. 
+
+For the purposes of this example, I'm going to draw on the earlier work linked 
+above and scale the spectra slope by 1.03 and the intercept by 0.85:
+```{r}
+ScaledResource <- ESMspectrum(GFDLplankton, GFDLsizes, slope_scale = 1.03, intercept_scale = 0.85)
+```
+
+Attach this new resource to a new set of parameters:
+```{r}
+new_params <- newMultispeciesParams(HIparams, interaction = HIinter, kappa = 1e12, min_w_pp = 1e-14, w_pp_cutoff = 455400)
+new_params <- setResource(new_params, resource_dynamics = "plankton_forcing")
+other_params(new_params)$n_pp_array <- ScaledResource$n_pp_array
+```
+And run another simple simulation without fishing: 
+```{r}
+ScaledSim <- project(new_params, dt = 1/12, t_max = 600, t_save = 10, effort = 0)
+plot(ScaledSim)
+```
+
+
+
+Yet to add:  
+
+* Additional explanatory text as helpful  
+* Checks to make sure the right sizes classes are being applied to each other
+* Other stuff you'd like to see? 
+
+## References
+Boudreau PW and Dickie LM. 1992. Biomass spectra of aquatic ecosystems in 
+relation to fisheries yield. Can. J. Fish. Aquat. Sci. 49: 1528-1538.
+
+Kearney KA, Bograd SJ, Drenkard E, Gomez FA, Haltuch M, Hermann AJ, Jacox MG, 
+Kaplan IC, Koenigstein S, Luo JY, Masi M, Muhling B, Pozo Buil M and 
+Woodworth-Jefcoats PA. 2021. Using global-scale earth system models for regional
+fisheries applications. Front. Mar. Sci. 8:622206. doi: 10.3389/fmars.2021.622206
+
+Woodworth-Jefcoats PA, Blanchard JL and Drazen JC. 2019. Relative impacts of 
+simultaneous stressors on a pelagic marine ecosystem. Front. Mar. Sci. 6:383.
+doi: 10.3389/fmars.2019.00383
