@@ -1,0 +1,14 @@
+! The purpose of this script is to extract a small area of chl and sst data for use with R.
+! Use conda environment Ferret2 to use OceanWatch data
+
+! Access data
+use "https://oceanwatch.pifsc.noaa.gov/erddap/griddap/esa-cci-chla-monthly-v6-0"
+use "https://oceanwatch.pifsc.noaa.gov/erddap/griddap/CRW_sst_v3_1_monthly"
+
+! Subset and regrid data
+let chl_regrid = CHLOR_A[d=1, x=180:200:0.1, y=10N:30N:0.1, l=328]
+let sst_regrid = SEA_SURFACE_TEMPERATURE[d=2, x=180:200:0.1, y=10N:30N:0.1, l=480]
+
+! Save data
+list/file=chl_regrid.nc/format=CDF chl_regrid
+list/file=sst_regrid.nc/format=CDF sst_regrid
