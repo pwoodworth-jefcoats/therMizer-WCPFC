@@ -137,7 +137,7 @@ BTOT <- function(sst, chl) {
   mb10 <- mb50 * (((10^((B+1)*log10(mb9010))) + 1) / 2)^(-1/(B+1))
   mb90 <- 10^(log10(mb10) + log10(mb9010))
   mb0 <- (-1.25*mb50^(B+1) + 1.25*mb10^(B+1) + mb50^(B+1))^(1/(B+1))
-  mb100 <- (1.25*mb90^(B+1) - 1.25*mb50^(B+1) + mb50^(B+1))^(1/(B+1))
+  mb100 <- (abs((1.25*mb90^(B+1) - 1.25*mb50^(B+1) + mb50^(B+1))))^(1/(B+1))
   A <- log10(chl)*0.585 + 9.704
   
   # This takes place in log-transformed space and is the integration of a 
