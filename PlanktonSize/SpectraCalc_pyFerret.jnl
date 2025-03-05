@@ -9,7 +9,7 @@ use CHL_REGRID[d=2]_regrid.nc
 
 ! Calculate stuff
 ! These equations are from SpectraCalc.R
-! Note that PyFerret's natural log operator is LOG
+! Note that PyFerret's common log operator is LOG
 ! https://ferret.pmel.noaa.gov/Ferret/documentation/users-guide/variables-xpressions/XPRESSIONS
 
 LET mb50 = 10^(SST_REGRID[d=1]*-0.043 + LOG(CHL_REGRID[d=2])*0.929 + 1.340)
