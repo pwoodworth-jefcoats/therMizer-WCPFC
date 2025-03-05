@@ -4,14 +4,13 @@
 ! These data were prepared using OceanWatchSubset.jnl
 
 ! Load data
-use SST_REGRID[d=1]_regrid.nc
-use CHL_REGRID[d=2]_regrid.nc
+use SST_regrid.nc
+use CHL_regrid.nc
 
 ! Calculate stuff
 ! These equations are from SpectraCalc.R
 ! Note that PyFerret's common log operator is LOG
 ! https://ferret.pmel.noaa.gov/Ferret/documentation/users-guide/variables-xpressions/XPRESSIONS
-
 LET mb50 = 10^(SST_REGRID[d=1]*-0.043 + LOG(CHL_REGRID[d=2])*0.929 + 1.340)
 LET mb9010 = 10^(SST_REGRID[d=1]*0.015 + 2.689)
 LET B = LOG(CHL_REGRID[d=2])*0.099 - 1.196
@@ -22,4 +21,9 @@ LET mb100 = (abs((1.25*mb90^(B+1) - 1.25*mb50^(B+1) + mb50^(B+1))))^(1/(B+1))
 LET A = LOG(CHL_REGRID[d=2])*0.585 + 9.704
 LET btot = ((B * LOG(mb100)^2)/2) + (A * LOG(mb100)) - (((B * LOG(mb0)^2)/2) + (A * LOG(mb0)))
 
+! Save A, B, mb0, and mb100
+LIST/FILE=A_regrid.nc/FORMAT=cdf A
+LIST/FILE=B_regrid.nc/FORMAT=cdf B
+LIST/FILE=mb0_regrid.nc/FORMAT=cdf mb0
+LIST/FILE=mb100_regrid.nc/FORMAT=cdf mb100
 
