@@ -1,0 +1,254 @@
+---
+title: "ResourceSpectraFromSatelliteData"
+author: "phoebe.woodworth-jefcoats@noaa.gov"
+output: html_document
+---
+
+## How to use this script
+This script includes a function to create mizer resource spectra from satellite
+remotely sensed data: `SATspectrum`.  It also includes a function, 
+`plankton_forcing`, for forcing your mizer model with the derived resource
+spectra.  And, it has some additional code and loads some data to walk you 
+through an example.  
+
+If you want to fully replicate the work here, all the necessary data are provided
+in this folder.  If you have your own data ready to go, you can skim the script
+and jump to the `SATspectrum` and `plankton_forcing` functions.  And, if you have 
+questions or need a hand, please [open an issue](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/issues). 
+Someone else probably has the same questions you do, so you'll be helping people 
+out by doing this.
+
+We'll get the `SATspectrum` function linked to the [mizer](https://github.com/sizespectrum/mizer)
+or [therMizer](https://github.com/sizespectrum/therMizer) packages soon! 
+Once they're there, you can use them without this guide.  In the meantime, you 
+could copy and paste just the functions for use in your own modeling.  
+
+### An example for the oligotrophic North Pacific 
+This example uses a model configured for the Hawaiʻi-based deep-set longline 
+fishery, whose operating footprint includes the oligotrphic North Pacific.  A 
+small piece of ocean is being used here in the interest of expediency as a
+proof-of-concept.  You can read more about the system in [Woodworth-Jefcoats et al. 2019](https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2019.00383/full).  
+
+This script assumes you have satellite data ready to go.  But, if you have 
+questions about how to tackle this piece, there's code in the [PlanktonSize](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/tree/main/PlanktonSize)
+folder of this repository.  You can also [open an issue](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/issues)
+with any questions.
+
+#### Data provided
+The following data are included in this folder and used to run this script:  
+
+* `HIregion_species_params.csv`: species parameters for this model  
+* `HIregion_inter.csv`: species interaction matrix for this model  
+* `Resource_Min.csv`: smallest phytoplankton size, in g C  
+* `Resource_Max.csv`: largest phytoplankton size, in g C  
+* `Resource_Slope.csv`: slope of the plankton spectrum  
+* `Resource_Intercept.csv`: intercept of the plankton spectrum
+
+For now, the resource data are just from a single time step.  Eventually, these 
+could be time series as are used the the `ESMspectrum` function.
+
+#### Set up your mizer model
+Here, we'll set up the multi-species mizer model that we want to force with the 
+ESM output.  **Note:** You need to do this step before you can use the 
+`SATspectrum` function, which uses the `w_full` parameter.  
+
+Okay, let's get started with the necessary and helpful packages:
+```{r, message = FALSE}
+# Set up environment
+library(mizer) # to run mizer
+library(here) # handy for directory navigation
+```
+
+Now, we'll set up a very basic multi-species model:
+```{r}
+# Load parameters 
+HIparams <- read.csv("HIregion_species_params.csv", header = TRUE)
+HIinter <- read.csv("HIregion_inter.csv", row.names = 1)
+HIinter <- as(HIinter,"matrix")
+
+# Load plankton size bounds
+phyto_min <- read.csv("Resource_Min.csv")
+phyto_max <- read.csv("Resource_Max.csv")
+
+# Generate parameters
+# params <- newMultispeciesParams(HIparams, interaction = HIinter, kappa = 1e12, min_w_pp = 1e-14, w_pp_cutoff = 455400) 
+params <- newMultispeciesParams(HIparams, interaction = HIinter, kappa = 1e12, 
+                                min_w_pp = phyto_min$plankton_min[1], 
+                                w_pp_cutoff = 455400) 
+```
+Now that that's done, we can incorporate the plankton slope and intercept. 
+
+#### Create resource spectra from ESM output
+Now, we're ready to use the satellite data to create resource spectra.  Exciting!
+This example uses [sea surface temperature](https://oceanwatch.pifsc.noaa.gov/erddap/griddap/CRW_sst_v3_1_monthly.html) 
+and [ocean color](https://oceanwatch.pifsc.noaa.gov/erddap/griddap/esa-cci-chla-monthly-v6-0.html) 
+data from [OceanWatch](https://oceanwatch.pifsc.noaa.gov/).  You can use other 
+sources if you prefer.  
+
+This example follows the methodology of [Barnes et al. (2011)](https://academic.oup.com/plankt/article/33/1/13/1403550.
+See the [PlanktonSize](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/tree/main/PlanktonSize)
+folder of this repository for details on its implementation.  
+
+Okay, let's get started by loading in the spectrum slope and intercept:
+```{r}
+phyto_slope <- read.csv("Resource_Slope.csv")
+phyto_intercept <- read.csv("Resource_Intercept.csv")
+```
+
+We'll also replicate these values for, say, 50 time steps just so the model has
+something to work with:
+```{r}
+phyto_slope_ts <- rep(phyto_slope$slope[1], 50)
+phyto_intercept_ts <- rep(phyto_intercept$intercept[1], 50)
+```
+
+This is all you need, along with `w_full`, to use the function below to convert 
+the satellite remotely sensed data into resource spectra.  Here's what the function does:  
+
+* Includes the options to set values by which to scale the linear model's slope
+and intercept.  This is often needed in order to generate resource spectra that
+allow your model to stabilize.  Creating a single apprpach that accurately 
+captures all ocean waters is a tall order, which is why this scaling may be
+necessary.  
+* Includes the option to specify time steps if you want to use something specific
+in your mizer model.  The default is time steps numbered 0 through the maximum number
+of time steps in your plankton data.
+* Returns 2 things:  
+  + Background resource array with the dimensions of time $\times$ size  
+  + Background resource array ready as `n_pp_array` for attaching to your model  
+
+Here's the `SATspectrum` function:
+```{r}
+SATspectrum <- function(plankton_slope, 
+                        plankton_intercept, 
+                        resource_sizes = params@w_full, 
+                        slope_scale = 1, 
+                        intercept_scale = 1,
+                        time_steps = seq(0, length(plankton_slope)[1], 1)){
+  
+  # Size classes for resource spectra, in log space
+  resource_x <- log10(resource_sizes)
+  
+  # Use linear model to generate resource spectra at each time step
+  # Identify number of time steps
+  t_max <- length(plankton_slope)
+  # Identify number of size classes
+  n_sizes <- length(resource_x)
+  
+  # Create array and fill it
+  resource_spectra <- array(numeric(), c(t_max,n_sizes)) # time by size
+  
+  # y values
+  for (t in seq(1,t_max,1)) {
+    # Apply linear model
+    resource_spectra[t,] <- plankton_slope[t] * resource_x * slope_scale + (plankton_intercept[t] * intercept_scale)
+  }
+  
+  # Create n_pp_array
+  sizes <- names(params@initial_n_pp)
+  n_pp_array <- array(NA, dim = c(length(time_steps), length(sizes)), dimnames = list(time = time_steps, w = sizes))
+  
+  # Fill n_pp_array
+  n_pp_array[1,] <- resource_spectra[1,]
+  for (t in seq(1,length(time_steps) - 1,1)) {
+    n_pp_array[t + 1,] <- resource_spectra[t,]
+  }
+  
+  return(list("resource_spectra" = resource_spectra, 
+              "n_pp_array" = n_pp_array))
+}
+```
+
+And here's how to use it in its simplest implementation:
+```{r}
+Resource <- SATspectrum(phyto_slope_ts, phyto_intercept_ts)
+```
+
+#### Use the resource spectra built from satellite data
+But we want to do more than generate the resource spectra.  We want to use them 
+to force a mizer model.  To do that, we need to attach the spectra to the model
+parameters and tell mizer to use it.  This is where the `plankton_forcing`
+function comes in:
+```{r}
+# From therMizer, create a plankton_forcing function
+plankton_forcing <- function(params, t, ...) {
+  w_cut_off <- params@resource_params$w_pp_cutoff
+  # index selects the right resource for any t
+  index_vec <- as.numeric(dimnames(other_params(params)$n_pp_array)[[1]]) - t
+  index <- which(index_vec == max(index_vec[index_vec<=0]))
+  # Convert to density
+  pkt <- 10^(other_params(params)$n_pp_array[index,])/params@dw_full 
+  # Set sizes above plankton resource max to zero
+  pkt[which(as.numeric(names(pkt)) >= w_cut_off)] <- 0
+  return(pkt)
+}
+```
+
+Then, we need to tell mizer to use it and the new resource spectra (`n_pp_array`):
+```{r}
+# Also from therMizer, attach the n_pp_array using this function
+params <- setResource(params, resource_dynamics = "plankton_forcing")
+
+# Attach n_pp_array to params
+other_params(params)$n_pp_array <- Resource$n_pp_array
+```
+
+And, finally, use it in a very simple case without fishing:
+```{r}
+InitialSim <- project(params, dt = 1/12, t_max = 50, t_save = 1, effort = 0)
+plot(InitialSim)
+```
+
+#### Scaling the background resource
+The initial test we did above demonstrates why you'd want to scale the background 
+resource.  Earth system models aren't designed to model plankton communities, so
+their output a) doesn't always resemble real ecosystems, and b) isn't often 
+directly comparable across models.  Scaling the ESM-derived resource spectra
+can resolve both these issues.  An alternative would be to bias correct in the 
+way that's often done with temperature.  If you have observations you can use for
+this, go for it.  Most systems, including the one modeled here, lack those data.
+Hence, scaling.
+
+In order to have something to "ground truth" your scaling attempts to, you'll want
+to run mizer with your species and system parameters, and with mizer's built-in
+semi-chemostat resource.  Use the feeding levels and biomass densities that 
+result from that to guide your scaling efforts.  This is admittedly a bit tedious
+and requires iterative trial and error.  I'm open to alternatives.  Please 
+[open an issue](https://github.com/pwoodworth-jefcoats/therMizer-WCPFC/issues) to 
+suggest them. 
+
+For the purposes of this example, I'm going to draw on the earlier work linked 
+above and scale the spectra slope by 1.03 and the intercept by 0.85:
+```{r}
+ScaledResource <- ESMspectrum(GFDLplankton, GFDLsizes, slope_scale = 1.03, intercept_scale = 0.85)
+```
+
+Attach this new resource to a new set of parameters:
+```{r}
+new_params <- newMultispeciesParams(HIparams, interaction = HIinter, kappa = 1e12, min_w_pp = 1e-14, w_pp_cutoff = 455400)
+new_params <- setResource(new_params, resource_dynamics = "plankton_forcing")
+other_params(new_params)$n_pp_array <- ScaledResource$n_pp_array
+```
+And run another simple simulation without fishing: 
+```{r}
+ScaledSim <- project(new_params, dt = 1/12, t_max = 600, t_save = 10, effort = 0)
+plot(ScaledSim)
+```
+
+
+
+Yet to add:  
+
+* Additional explanatory text as helpful  
+* Checks to make sure the right sizes classes are being applied to each other
+* Other stuff you'd like to see? 
+
+## References
+Barnes C, Irigoien X, De Oliveira JAA, Maxwell D, and Jennings S. 2011. 
+Predicting marine phytoplankton community size structure from empirical 
+relationships with remotely sensed variables, Journal of Plankton Research. 
+33(1):13–24, https://doi.org/10.1093/plankt/fbq088
+
+Woodworth-Jefcoats PA, Blanchard JL and Drazen JC. 2019. Relative impacts of 
+simultaneous stressors on a pelagic marine ecosystem. Front. Mar. Sci. 6:383.
+doi: 10.3389/fmars.2019.00383
